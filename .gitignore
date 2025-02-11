@@ -1,0 +1,11 @@
+build
+.vscode*
+.cache
+.dotnet
+.config
+.ssh
+.local
+.gnupg
+
+/.gitconfig
+/.bash_history

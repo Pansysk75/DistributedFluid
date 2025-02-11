@@ -1,0 +1,17 @@
+name: GitHub Classroom Workflow (CSC4700/2025 - Project)
+
+on: [push]
+
+permissions:
+  checks: write
+  actions: read
+  contents: read
+
+jobs:
+  build:
+    name: Autograding
+    runs-on: ubuntu-latest
+    container: stellargroup/csc4700:latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: education/autograding@v1
