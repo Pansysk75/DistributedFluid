@@ -6,9 +6,13 @@
 #include <iostream>
 #include <vector>
 
-#include <tile.hpp>
+#include <hpx/hpx.hpp>
+#include <hpx/hpx_init.hpp>
+
+#include <tile_component.hpp>
 #include <utils/BitmapPlusPlus.hpp>
 #include <utils/timer.hpp>
+
 
 class int_sequence
 {
@@ -70,6 +74,7 @@ void update_tile_inner_seq(
         kernel(p_curr, curr);
     }
 }
+
 
 template <typename elem_t, typename F>
 void update_tile_inner_par(
@@ -150,11 +155,12 @@ void save_to_bitmap(Tile<float> const& tile, const std::string& filename)
     std::cout << "Bitmap saved to " << filename << std::endl;
 }
 
-int main()
-{
-    using elem_t = float;
-    using tile_t = Tile<float>;
-    using iter_2d_t = typename tile_t::iterator_2d_t;
+
+template <typename TileType>
+void blur_kernel_remote(hpx::id_type tile_id,
+    hpx::id_type prev_tile_id){
+
+    using iter_2d_t = typename TileType::iterator_2d_t;
 
     auto blur_kernel = Kernel(3, 3,    // 3x3 kernel
         [](iter_2d_t const& prev, iter_2d_t& curr) -> void {
@@ -168,24 +174,63 @@ int main()
             curr.get() = sum / elem_t(9);    // Average the sum
         });
 
-    tile_t tile(1000, 1000, 1, 1);
-    tile_t prev_tile(tile);    // Buffer tile
+    // Get local tile instances from hpx::id_type
+    auto tile_ptr = hpx::get_ptr<TileType>(tile_id).get();
+    auto prev_tile_ptr = hpx::get_ptr<TileType>(prev_tile_id).get();
+    
+    update_tile_inner_seq(*tile_ptr, *prev_tile_ptr, blur_kernel);
+}
 
-    // Initialize tiles with random values
-    std::generate(
-        tile.begin(), tile.end(), []() { return elem_t(rand() % 100); });
-    std::generate(prev_tile.begin(), prev_tile.end(),
-        []() { return elem_t(rand() % 100); });
 
-    save_to_bitmap(tile, "input.bmp");
 
-    ps::timer_run("Sequential Tile Update",
-        [&]() { update_tile_inner_seq(tile, prev_tile, blur_kernel); });
+using elem_t = float;
+HPX_PLAIN_ACTION(blur_kernel_remote< Tile<elem_t> >, blur_kernel_remote_action);
 
-    ps::timer_run("Parallel Tile Update",
-        [&]() { update_tile_inner_par(tile, prev_tile, blur_kernel); });
+int hpx_main()
+{
+    using tile_t = Tile<elem_t>;
+    using iter_2d_t = typename tile_t::iterator_2d_t;
 
-    save_to_bitmap(tile, "output_seq.bmp");
 
-    return 0;
+    hpx::id_type tile =
+        hpx::new_<Tile<elem_t>>(hpx::find_here(), 1000, 1000, 1, 1).get();
+
+    hpx::id_type prev_tile =
+        hpx::new_<Tile<elem_t>>(hpx::find_here(), 1000, 1000, 1, 1).get();
+
+
+    hpx::future<void> f = hpx::async(
+        blur_kernel_remote_action{},
+        hpx::colocated(tile), // Where
+        tile, prev_tile); // Arguments
+
+    f.get();    // Wait for the action to complete
+
+
+
+    // tile_t tile(1000, 1000, 1, 1);
+    // tile_t prev_tile(tile);    // Buffer tile
+
+    // // Initialize tiles with random values
+    // std::generate(
+    //     tile.begin(), tile.end(), []() { return elem_t(rand() % 100); });
+    // std::generate(prev_tile.begin(), prev_tile.end(),
+    //     []() { return elem_t(rand() % 100); });
+
+    // save_to_bitmap(tile, "input.bmp");
+
+    // ps::timer_run("Sequential Tile Update",
+    //     [&]() { update_tile_inner_seq(tile, prev_tile, blur_kernel); });
+
+    // ps::timer_run("Parallel Tile Update",
+    //     [&]() { update_tile_inner_par(tile, prev_tile, blur_kernel); });
+
+    // save_to_bitmap(tile, "output_seq.bmp");
+
+    return hpx::finalize();    // Shutdown HPX runtime
+}
+
+int main(int argc, char* argv[])
+{
+    return hpx::init(argc, argv);
 }
