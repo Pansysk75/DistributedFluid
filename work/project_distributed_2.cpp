@@ -120,20 +120,6 @@ void update_tile_inner_par(
     }
 }
 
-// update_tile_outer(){
-//     // Outer tiles are  the ones that depend on ghost elements
-// }
-
-// fetch_ghost_elements(){
-//     // Ghost elements are fetched from other localities
-// }
-
-// update_tile(){
-//   fut = fetch_ghost_elements();
-//   update_tiles_inner();
-//   update_tiles_outer();
-// }
-
 void save_to_bitmap(Tile<float> const& tile, const std::string& filename)
 {
     bmp::Bitmap bitmap(tile.dim_x(), tile.dim_y());
@@ -336,6 +322,7 @@ int hpx_main()
     }
 
     // Now we can run the blur kernel on each tile
+    std::vector<hpx::future<void>> blur_futures;
     for (auto it = world.begin(); it != world.end(); ++it)
     {
         // All neighbors must have finished communicating for this tile
@@ -362,9 +349,10 @@ int hpx_main()
                 tile_id, prev_tile_id);
         });
 
-        tile_fut = hpx::make_shared_future(
-            std::move(f2));    // Update the future in the tile
+        blur_futures.push_back(std::move(f2));
     }
+    // Wait for all blur kernels to finish
+    hpx::wait_all(blur_futures);
 
     return hpx::finalize();    // Shutdown HPX runtime
 }

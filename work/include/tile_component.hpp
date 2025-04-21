@@ -52,6 +52,7 @@ public:
         using undress_t = std::remove_pointer_t<std::remove_reference_t<T>>;
 
         using value_type = typename undress_t<tile_ptr_t>::value_type;
+        using difference_type = std::ptrdiff_t;
 
         static constexpr bool is_const_v =
             std::is_const_v<std::remove_pointer_t<tile_ptr_t>>;
@@ -99,6 +100,12 @@ public:
                 tile_, new_x, new_y, x_min_, x_max_, y_min_, y_max_);
         }
 
+        difference_type operator-(const Iterator_2d& other) const
+        {
+            assert(tile_ == other.tile_);
+            return (y_ - other.y_) * (x_max_ - x_min_) + (x_ - other.x_);
+        }
+
         Iterator_2d& operator+=(size_t offset)
         {
             size_t new_x = x_ + offset;
@@ -139,6 +146,11 @@ public:
         size_t y() const
         {
             return y_;
+        }
+
+        tile_ptr_t tile() const
+        {
+            return tile_;
         }
 
     private:
@@ -191,6 +203,25 @@ public:
             assert(tile_ != nullptr);
             return iter_2d_t(
                 tile_, x_min_, y_max_, x_min_, x_max_, y_min_, y_max_);
+        }
+
+        size_t size_x() const
+        {
+            return x_max_ - x_min_;
+        }
+
+        size_t size_y() const
+        {
+            return y_max_ - y_min_;
+        }
+
+        View_2d subview(
+            size_t x_min, size_t x_max, size_t y_min, size_t y_max) const
+        {
+            assert(x_min >= 0 && x_max <= x_max_ - x_min_);
+            assert(y_min >= 0 && y_max <= y_max_ - y_min_);
+            return View_2d(tile_, x_min + x_min_, x_max + x_min_,
+                y_min + y_min_, y_max + y_min_);
         }
 
         size_t size() const
@@ -285,6 +316,20 @@ public:
     size_t size() const
     {
         return data_.size();
+    }
+    
+    // Checks if the coordinates are within the inner tile's data range
+    bool is_inner(size_t x, size_t y) const
+    {
+        return (x >= pad_x_ && x < dim_x_ + pad_x_ &&
+                y >= pad_y_ && y < dim_y_ + pad_y_);
+    }
+
+    // Checks if the coordinates are within the tile's data range
+    bool is_valid(size_t x, size_t y) const
+    {
+        return (x >= 0 && x < dim_x_ + 2 * pad_x_ &&
+                y >= 0 && y < dim_y_ + 2 * pad_y_);
     }
 
 private:

@@ -10,9 +10,6 @@
 #include <utils/BitmapPlusPlus.hpp>
 #include <utils/timer.hpp>
 
-class int_sequence
-{
-};
 
 // kernel class:
 // Stores the dimensions, and a function that operates on tiles
@@ -168,7 +165,7 @@ int main()
             curr.get() = sum / elem_t(9);    // Average the sum
         });
 
-    tile_t tile(1000, 1000, 1, 1);
+    tile_t tile(500, 500, 1, 1);
     tile_t prev_tile(tile);    // Buffer tile
 
     // Initialize tiles with random values
