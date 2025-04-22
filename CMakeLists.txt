@@ -27,10 +27,30 @@ add_executable(project_distributed_2 work/project_distributed_2.cpp)
 target_link_libraries(project_distributed_2 HPX::hpx tile_component)
 target_include_directories(project_distributed_2 PRIVATE work/include)
 
-add_executable(project_fluid work/project_fluid.cpp)
-target_link_libraries(project_fluid HPX::hpx)
-target_include_directories(project_fluid PRIVATE work/include)
+add_executable(project_fluid_1 work/project_fluid_1.cpp)
+target_include_directories(project_fluid_1 PRIVATE work/include)
 
+add_executable(project_fluid_2 work/project_fluid_2.cpp)
+target_include_directories(project_fluid_2 PRIVATE work/include)
+
+add_executable(project_fluid_3 work/project_fluid_3.cpp)
+target_include_directories(project_fluid_3 PRIVATE work/include)
+
+add_executable(project_fluid_4 work/project_fluid_4.cpp)
+target_include_directories(project_fluid_4 PRIVATE work/include)
+
+add_executable(project_fluid_5 work/project_fluid_5.cpp)
+target_include_directories(project_fluid_5 PRIVATE work/include)
+
+add_executable(project_fluid_5_hpx work/project_fluid_5_hpx.cpp)
+target_link_libraries(project_fluid_5_hpx HPX::hpx)
+target_include_directories(project_fluid_5_hpx PRIVATE work/include)
+
+add_executable(project_fluid_static work/project_fluid_static.cpp)
+target_include_directories(project_fluid_static PRIVATE work/include)
+
+add_executable(project_fluid_5_soa work/project_fluid_5_soa.cpp)
+target_include_directories(project_fluid_5_soa PRIVATE work/include)
 
 # Uncomment this if you want to use matplotlib.h
 # target_compile_definitions(project PRIVATE WITHOUT_NUMPY)

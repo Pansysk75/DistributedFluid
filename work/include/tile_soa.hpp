@@ -3,26 +3,35 @@
 #include <vector>
 #include <cassert>
 
-// Tile class:
-// Stores data for one (2D) tile
+// Tile_SOA class:
+// Stores data for one (2D) Tile_SOA
 // Padded with padding/ghost elements (as many as needed for the kernel to operate correctly)
-template <typename elem_t>
-class Tile
+template <typename ...Ts>
+class Tile_SOA
 {
     
 public:
-    using value_type = elem_t;
 
+    using value_type = std::tuple<Ts...>;
+    using reference_type = std::tuple<Ts&...>;
+    using const_reference_type = std::tuple<Ts const&...>;
+    using pointer_type = std::tuple<Ts*...>;
+    using const_pointer_type = std::tuple<Ts const*...>;
     // Default constructor
-    Tile() = default;
+    Tile_SOA() = default;
 
-    Tile(size_t dim_x, size_t dim_y, size_t kernel_x, size_t kernel_y)
+    Tile_SOA(size_t dim_x, size_t dim_y, size_t kernel_x, size_t kernel_y)
       : dim_x_(dim_x)
       , dim_y_(dim_y)
       , pad_x_(kernel_x)
       , pad_y_(kernel_y)
     {
-        data_.resize((dim_x_ + 2 * pad_x_) * (dim_y_ + 2 * pad_y_));
+        // data_.resize((dim_x_ + 2 * pad_x_) * (dim_y_ + 2 * pad_y_));
+        std::apply(
+            [&](auto&... args) {
+                ((args.resize((dim_x_ + 2 * pad_x_) * (dim_y_ + 2 * pad_y_))), ...);
+            },
+            data_);
     }
 
     size_t dim_x() const
@@ -51,13 +60,18 @@ public:
         template <typename T>
         using undress_t = std::remove_pointer_t<std::remove_reference_t<T>>;
 
-        using value_type = typename undress_t<tile_ptr_t>::value_type;
+        using tile_t = undress_t<tile_ptr_t>;
+
         using difference_type = std::ptrdiff_t;
 
         static constexpr bool is_const_v =
             std::is_const_v<std::remove_pointer_t<tile_ptr_t>>;
         using reference_type =
-            std::conditional_t<is_const_v, const value_type&, value_type&>;
+            std::conditional_t<is_const_v, typename tile_t::const_reference_type, typename tile_t::reference_type>;
+
+        template <typename T>
+        using elem_ref_t = std::conditional_t<
+        is_const_v, T const&, T&>;
 
         Iterator_2d(tile_ptr_t tile, size_t x, size_t y, size_t x_min,
             size_t x_max, size_t y_min, size_t y_max)
@@ -127,12 +141,27 @@ public:
             size_t x = x_ + offset_x;
             size_t y = y_ + offset_y;
             assert(tile_ != nullptr);
+            assert(x >= 0 && x < tile_->dim_x() + 2 * tile_->pad_x() &&
+                y >= 0 && y < tile_->dim_y() + 2 * tile_->pad_y());
+            auto idx = y * (tile_->dim_x() + 2 * tile_->pad_x()) + x;
+            // Make tuple of references
+            auto ret = std::apply(
+                [&](auto&... args) { return std::tie(args[idx]...); }, tile_->data_);
+            return ret;
+        }
+        
+        template <size_t elem_idx>
+        auto& get(size_t offset_x = 0, size_t offset_y = 0) const
+        {
+            size_t x = x_ + offset_x;
+            size_t y = y_ + offset_y;
+            assert(tile_ != nullptr);
             assert(x >= 0 && x < tile_->dim_x() + 2 * tile_->pad_x() && y >= 0 &&
                 y < tile_->dim_y() + 2 * tile_->pad_y());
             auto idx = y * (tile_->dim_x() + 2 * tile_->pad_x()) + x;
-            reference_type data_ref(tile_->data_[idx]);
-            return data_ref;
+            return std::get<elem_idx>(tile_->data_)[idx];
         }
+        
 
         reference_type operator*() const
         {
@@ -160,8 +189,8 @@ public:
         size_t y_min_, y_max_;    // Bounds for y iteration
     };
 
-    using iterator_2d_t = Iterator_2d<Tile*>;
-    using const_iterator_2d_t = Iterator_2d<Tile const*>;
+    using iterator_2d_t = Iterator_2d<Tile_SOA*>;
+    using const_iterator_2d_t = Iterator_2d<Tile_SOA const*>;
 
     // Full tile, does not skip over padding
     iterator_2d_t begin()
@@ -255,8 +284,8 @@ public:
             dim_x_ + 2 * pad_x_, 0, dim_y_ + 2 * pad_y_);
     }
 
-    using inner_2d_tile_t = View_2d<Tile*>;
-    using const_inner_2d_tile_t = View_2d<Tile const*>;
+    using inner_2d_tile_t = View_2d<Tile_SOA*>;
+    using const_inner_2d_tile_t = View_2d<Tile_SOA const*>;
 
     // non-const tile view
     // Does not skip over padding
@@ -328,7 +357,7 @@ public:
 private:
     size_t dim_x_, dim_y_;
     size_t pad_x_, pad_y_;
-    std::vector<elem_t> data_;
+    std::tuple<std::vector<Ts>...> data_; // Data storage for the tile
 };
 
 // Iterator to traverse a given 2d view in sub-views (blocks)
