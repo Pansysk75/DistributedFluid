@@ -52,6 +52,10 @@ target_include_directories(project_fluid_static PRIVATE work/include)
 add_executable(project_fluid_5_soa work/project_fluid_5_soa.cpp)
 target_include_directories(project_fluid_5_soa PRIVATE work/include)
 
+add_executable(project_distributed_fluid work/project_distributed_fluid.cpp)
+target_link_libraries(project_distributed_fluid HPX::hpx tile_component)
+target_include_directories(project_distributed_fluid PRIVATE work/include)
+
 # Uncomment this if you want to use matplotlib.h
 # target_compile_definitions(project PRIVATE WITHOUT_NUMPY)
 # target_link_libraries(project Python3::Python Python3::Module)

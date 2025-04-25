@@ -271,20 +271,74 @@ void copy_ghost_elements(
 
 HPX_PLAIN_ACTION(copy_ghost_elements<Tile<elem_t>>, copy_ghost_elements_action);
 
+
+template <typename TileType>
+hpx::future<void> emit_ghost_elements(TileType& world, typename TileType::iterator_2d_t it){
+    auto update_direction = [](auto it, int dx, int dy) {
+        hpx::id_type curr_id = it->t_id;
+        hpx::id_type neighbor_id = it.get(dx, dy).t_id;
+        return hpx::async(copy_ghost_elements_action{},
+            hpx::colocated(curr_id), curr_id, neighbor_id, dx, dy);
+    };
+
+    std::vector<hpx::shared_future<void>> comm;
+
+    if (it.x() > 0)
+        comm.push_back(update_direction(it, -1, 0));
+
+    if (it.x() < world.dim_x() - 1)
+        comm.push_back(update_direction(it, 1, 0));
+
+    if (it.y() > 0)
+        comm.push_back(update_direction(it, 0, -1));
+
+    if (it.y() < world.dim_y() - 1)
+        comm.push_back(update_direction(it, 0, 1));
+    
+    // Create new future that waits for all communication to finish
+    return hpx::when_all(comm.begin(), comm.end());
+}
+
+template <typename TileType>
+hpx::future<void> neighbors_ready(
+    TileType& world, typename TileType::iterator_2d_t it)
+{
+    std::vector<hpx::shared_future<void>> comm_futures;
+    if (it.x() > 0)
+        comm_futures.push_back(it.get(-1, 0).fut);
+    if (it.x() < world.dim_x() - 1)
+        comm_futures.push_back(it.get(1, 0).fut);
+    if (it.y() > 0)
+        comm_futures.push_back(it.get(0, -1).fut);
+    if (it.y() < world.dim_y() - 1)
+        comm_futures.push_back(it.get(0, 1).fut);
+
+    return hpx::when_all(comm_futures.begin(), comm_futures.end());
+}
+
+struct RemoteTile {
+    hpx::id_type t_id;
+    hpx::id_type buf_t_id;
+    hpx::shared_future<void> fut;
+};
+
 int hpx_main()
 {
     // A 2d grid. Each grid element consists of two tiles (main and buffer)
     // A future is also used to synchronize the computation
-    Tile<std::tuple<hpx::id_type, hpx::id_type, hpx::shared_future<void>>>
-        world(8, 8, 0, 0);
+    size_t world_dim_x = 8;
+    size_t world_dim_y = 8;
+    Tile<RemoteTile> world(world_dim_x, world_dim_y, 0, 0);
 
     // Initialize the tiles, distributing them across localities
     std::vector<hpx::id_type> localities = hpx::find_all_localities();
+    size_t n_tiles = world_dim_x * world_dim_y;
     size_t idx = 0;
     for (auto& [id, buff_id, _] : world)
     {
         // Assign each tile to a locality
-        auto loc = localities[idx % localities.size()];
+        size_t loc_idx = idx * localities.size() / n_tiles;
+        auto loc = localities[loc_idx];
         id = hpx::new_<Tile<elem_t>>(loc, 1000, 1000, 1, 1).get();
         buff_id = hpx::new_<Tile<elem_t>>(loc, 1000, 1000, 1, 1).get();
         ++idx;
@@ -293,32 +347,7 @@ int hpx_main()
     // Communicate ghost elements between tiles
     for (auto it = world.begin(); it != world.end(); ++it)
     {
-        auto update_direction = [](auto it, int dx, int dy) {
-            hpx::id_type curr_id = std::get<0>(*it);
-            hpx::id_type neighbor_id = std::get<0>(it.get(dx, dy));
-            return hpx::async(copy_ghost_elements_action{},
-                hpx::colocated(curr_id), curr_id, neighbor_id, dx, dy);
-        };
-
-        std::vector<hpx::shared_future<void>> comm;
-
-        auto& [tile_id, prev_tile_id, tile_fut] = *it;
-        if (it.x() > 0)
-            comm.push_back(update_direction(it, -1, 0));
-
-        if (it.x() < world.dim_x() - 1)
-            comm.push_back(update_direction(it, 1, 0));
-
-        if (it.y() > 0)
-            comm.push_back(update_direction(it, 0, -1));
-
-        if (it.y() < world.dim_y() - 1)
-            comm.push_back(update_direction(it, 0, 1));
-
-        // Create new future that waits for all communication to finish
-        auto comm_all = hpx::when_all(comm.begin(), comm.end());
-
-        tile_fut = hpx::make_shared_future(std::move(comm_all));
+        it->fut = emit_ghost_elements(world, it);
     }
 
     // Now we can run the blur kernel on each tile
@@ -327,26 +356,13 @@ int hpx_main()
     {
         // All neighbors must have finished communicating for this tile
         // to proceed
-        auto& [tile_id, prev_tile_id, tile_fut] = *it;
-
-        std::vector<hpx::shared_future<void>> comm_futures;
-        if (it.x() > 0)
-            comm_futures.push_back(std::get<2>(it.get(-1, 0)));
-        if (it.x() < world.dim_x() - 1)
-            comm_futures.push_back(std::get<2>(it.get(1, 0)));
-        if (it.y() > 0)
-            comm_futures.push_back(std::get<2>(it.get(0, -1)));
-        if (it.y() < world.dim_y() - 1)
-            comm_futures.push_back(std::get<2>(it.get(0, 1)));
-
-        // Wait for all communication to finish before running the kernel
-        auto f1 = hpx::when_all(comm_futures.begin(), comm_futures.end());
-
-        auto f2 = f1.then([tile_id, prev_tile_id](hpx::future<void> /**/) {
+        auto f1 = neighbors_ready(world, it);
+        
+        auto f2 = f1.then([it](hpx::future<void> /**/) {
             // This will run after all communication is done
             // Schedule the blur kernel on the locality where the tile is located
-            hpx::async(blur_kernel_remote_action{}, hpx::colocated(tile_id),
-                tile_id, prev_tile_id);
+            hpx::async(blur_kernel_remote_action{}, hpx::colocated(it->t_id),
+            it->t_id, it->buf_t_id);
         });
 
         blur_futures.push_back(std::move(f2));

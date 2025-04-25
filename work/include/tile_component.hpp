@@ -2,6 +2,7 @@
 #include <cstddef>    // std::size_t
 #include <vector>
 #include <hpx/include/components.hpp>
+#include <hpx/program_options/errors.hpp>
 
 // Tile class:
 // Stores data for one (2D) tile
@@ -41,6 +42,21 @@ public:
     {
         return pad_y_;
     }
+    size_t size_x() const
+    {
+        return dim_x_ + 2 * pad_x_;
+    }
+    size_t size_y() const
+    {
+        return dim_y_ + 2 * pad_y_;
+    }
+
+    value_type& get(size_t x, size_t y)
+    {
+        assert(x >= 0 && x < dim_x_ + 2 * pad_x_ && y >= 0 &&
+            y < dim_y_ + 2 * pad_y_);
+        return data_[y * (dim_x_ + 2 * pad_x_) + x];
+    }
 
     // Iterate over 2D coordinates (can be a subset of a tile)
     // Template to allow for both const and non-const references to Tile
@@ -59,6 +75,11 @@ public:
         using reference_type =
             std::conditional_t<is_const_v, const value_type&, value_type&>;
 
+        using pointer_type =
+            std::conditional_t<is_const_v, const value_type*, value_type*>;
+
+        Iterator_2d() = default;
+
         Iterator_2d(tile_ptr_t tile, size_t x, size_t y, size_t x_min,
             size_t x_max, size_t y_min, size_t y_max)
           : tile_(tile)
@@ -74,6 +95,11 @@ public:
         bool operator!=(const Iterator_2d& other) const
         {
             return (tile_ != other.tile_) || x_ != other.x_ || y_ != other.y_;
+        }
+
+        bool operator==(const Iterator_2d& other) const
+        {
+            return !(*this != other);
         }
         
         Iterator_2d& operator++()
@@ -139,6 +165,12 @@ public:
             return get();
         }
 
+        
+        pointer_type operator->() const
+        {
+            return &get();
+        }
+
         size_t x() const
         {
             return x_;
@@ -173,6 +205,8 @@ public:
     {
     public:
         using iter_2d_t = Iterator_2d<tile_ptr_t>;
+        using reference_type =
+            typename iter_2d_t::reference_type;
 
         // Default constructor
         View_2d() = default;
@@ -229,6 +263,14 @@ public:
             return (x_max_ - x_min_) * (y_max_ - y_min_);
         }
 
+        reference_type get(size_t x, size_t y) const
+        {
+            assert(tile_ != nullptr);
+            assert(x >= 0 && x < x_max_ - x_min_ && y >= 0 &&
+                y < y_max_ - y_min_);
+            return tile_->get(x + x_min_, y + y_min_);
+        }
+
     private:
         tile_ptr_t tile_ = nullptr; // Pointer to the tile data
         size_t x_min_, x_max_;
@@ -279,6 +321,15 @@ public:
         size_t x_min, size_t x_max, size_t y_min, size_t y_max) const
     {
         return const_inner_2d_tile_t(this, x_min, x_max, y_min, y_max);
+    }
+
+    inner_2d_tile_t view(){
+        return view(0, dim_x_ + 2 * pad_x_, 0, dim_y_ + 2 * pad_y_);
+    }
+
+    const_inner_2d_tile_t view() const
+    {
+        return view(0, dim_x_ + 2 * pad_x_, 0, dim_y_ + 2 * pad_y_);
     }
 
     // non-const inner tile
@@ -338,3 +389,119 @@ private:
     std::vector<elem_t> data_;
 };
 
+
+
+// Iterator to traverse a given 2d view in sub-views (blocks)
+// Dereferencing returns a 2d view
+// incrementing moves to the next block
+// This is useful for cache-friendly access patterns
+template <typename view_2d_t>
+class blocked_2d_view_iterator
+{
+public:
+    using value_type = view_2d_t;
+    using difference_type = std::ptrdiff_t;
+
+    blocked_2d_view_iterator(view_2d_t view, size_t block_size_x,
+        size_t block_size_y, size_t x, size_t y)
+      : view_(view)
+      , bl_size_x_(block_size_x)
+      , bl_size_y_(block_size_y)
+      , x_(x)
+      , y_(y)
+    {
+    }
+
+    bool operator!=(const blocked_2d_view_iterator& other) const
+    {
+        return (x_ != other.x_) || (y_ != other.y_);
+    }
+
+    // Pre-increment
+    blocked_2d_view_iterator& operator++()
+    {
+        x_ += bl_size_x_;
+        if (x_ > view_.size_x())
+        {
+            x_ = 0;
+            y_ += bl_size_y_;
+        }
+        return *this;
+    }
+
+    blocked_2d_view_iterator& operator+=(size_t offset)
+    {
+        size_t blocks_per_row = (view_.size_x() + bl_size_x_ - 1) / bl_size_x_;
+        x_ += (offset % blocks_per_row) * bl_size_x_;
+        y_ += (offset / blocks_per_row) * bl_size_y_;
+        if (x_ >= view_.size_x())
+        {
+            x_ = 0;
+            y_ += bl_size_y_;
+        }
+        return *this;
+    }
+
+    difference_type operator-(const blocked_2d_view_iterator& other) const
+    {
+        size_t blocks_per_row = (view_.size_x() + bl_size_x_ - 1) / bl_size_x_;
+        return ((x_ - other.x_) / bl_size_x_) +
+            ((y_ - other.y_) / bl_size_y_) * blocks_per_row;
+    }
+
+    value_type operator*() const
+    {
+        size_t x_max = std::min(x_ + bl_size_x_, view_.size_x());
+        size_t y_max = std::min(y_ + bl_size_y_, view_.size_y());
+        return view_.subview(x_, x_max, y_, y_max);
+    }
+
+private:
+    size_t bl_size_x_, bl_size_y_;
+    size_t x_, y_;    // Current block position in the view
+    view_2d_t view_;
+};
+
+template <typename view_2d_t>
+class blocked_2d_view
+{
+public:
+    using iterator = blocked_2d_view_iterator<view_2d_t>;
+
+    blocked_2d_view(view_2d_t view, size_t block_size_x, size_t block_size_y)
+      : view_(view)
+      , bl_size_x_(block_size_x)
+      , bl_size_y_(block_size_y)
+    {
+    }
+
+    iterator begin()
+    {
+        return iterator(view_, bl_size_x_, bl_size_y_, 0, 0);
+    }
+    iterator end()
+    {
+        return iterator(view_, bl_size_x_, bl_size_y_, 0, view_.size_y());
+    }
+    size_t size() const
+    {
+        return ((view_.size_x() + bl_size_x_ - 1) / bl_size_x_) *
+            ((view_.size_y() + bl_size_y_ - 1) / bl_size_y_);
+    }
+    size_t block_size_x() const
+    {
+        return bl_size_x_;
+    }
+    size_t block_size_y() const
+    {
+        return bl_size_y_;
+    }
+    view_2d_t view() const
+    {
+        return view_;
+    }
+
+private:
+    view_2d_t view_;
+    size_t bl_size_x_, bl_size_y_;
+};

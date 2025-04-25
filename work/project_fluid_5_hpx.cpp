@@ -417,7 +417,7 @@ int hpx_main(int argc, char* argv[])
             }
             // Create a pressure gradient to create a flow
             // curr.get().p = curr.x() * 5.0 * params.h * params.h / params.dt;
-            curr.get().vx = 1.0 / params.dt;
+            curr.get().vx = -1.0 / params.dt;
 
             float speed = 2;
             float pi = 3.14159265358979323846;
